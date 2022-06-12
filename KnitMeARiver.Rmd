@@ -1,0 +1,159 @@
+---
+title: "nypd"
+author: "Salim Hanhan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(lubridate)
+library(tidyverse)
+```
+
+
+```{r}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+
+data <- read_csv(url)
+```
+
+Convert the date columns from string to date type
+
+```{r}
+summary(data)
+```
+```{r}
+data <- data %>% mutate(OCCUR_DATE= mdy(OCCUR_DATE))
+data %>% head
+# data %>% select(c("OCCUR_DATE")) %>% filter(!is.na(OCCUR_DATE)) %>% head
+```
+```{r}
+summary(data)
+```
+Extract the unique age groups
+
+```{r}
+agegroups <- unique(data$VIC_AGE_GROUP)
+agegroups %>% head
+
+racegroups <- unique(data$VIC_RACE)
+racegroups %>% head
+
+```
+
+Set the values in an array
+
+```{r}
+agnum <- c("25-44"=1,"65+"=2, "18-24"=3,"<18"=4,"45-64"=5,"UNKNOWN"=6)
+agnum
+```
+
+
+add a new columns with the age group number
+
+```{r}
+data <- data %>% mutate(vic_age_group_num=agnum[VIC_AGE_GROUP])
+```
+```{r}
+data %>% filter(VIC_SEX == "F") %>%
+# hist(female_data$vic_age_group_num, main="shooting per age group for sex female")
+  ggplot(aes(x=VIC_AGE_GROUP)) + 
+  geom_bar()+
+  ggtitle("shooting per age group for sex female")
+```
+```{r}
+data %>% filter(VIC_SEX == "M") %>%
+  ggplot(aes(x=VIC_AGE_GROUP)) + 
+  geom_bar()+
+  ggtitle("shooting per age group for sex male")
+```
+```{r}
+races <- c("BLACK", "BLACK HISPANIC")
+data %>% 
+  filter(vic_age_group_num == 1 & VIC_RACE %in% races) %>%
+  select(c("OCCUR_DATE", "VIC_RACE")) %>% 
+  group_by(OCCUR_DATE) %>% 
+    tally %>% 
+    mutate(Count = n) %>%
+  arrange(OCCUR_DATE) %>%
+  mutate(month = cut.Date(OCCUR_DATE, breaks = "1 month", labels = FALSE)) %>% 
+  select(c("Count", "month")) %>%
+  mutate(month=ymd("2006-01-01") + months(month - 1))%>%
+  group_by(month) %>% summarise(Count=sum(Count)) %>%
+  filter(month > ymd("2018-01-01")) %>%
+  ggplot(aes(x=month, y=Count, type="l")) +
+  geom_line(aes(color="Count")) + 
+  ggtitle(paste("shoottings of", paste(races, collapse = ' and '), "race groups"))
+```
+```{r}
+races <- c("WHITE HISPANIC", "WHITE")
+data %>% 
+  filter(vic_age_group_num == 1 & VIC_RACE %in% races) %>%
+  select(c("OCCUR_DATE", "VIC_RACE")) %>% 
+  group_by(OCCUR_DATE) %>% 
+    tally %>% 
+    mutate(Count = n) %>%
+  arrange(OCCUR_DATE) %>%
+  mutate(month = cut.Date(OCCUR_DATE, breaks = "1 month", labels = FALSE)) %>% 
+  select(c("Count", "month")) %>%
+  mutate(month=ymd("2006-01-01") + months(month - 1))%>%
+  group_by(month) %>% summarise(Count=sum(Count)) %>%
+  filter(month > ymd("2018-01-01")) %>%
+  ggplot(aes(x=month, y=Count, type="l")) +
+  geom_line(aes(color="Count")) + 
+  ggtitle(paste("shoottings of", paste(races, collapse = ' and '), "race groups"))
+```
+```{r}
+data %>% 
+   # Latitude       Longitude     
+  select(c("Latitude", "Longitude", "VIC_RACE")) %>%
+  ggplot(aes(Longitude,Latitude )) +
+  geom_point(size = 0.1, aes(colour=factor(VIC_RACE))) + 
+  ggtitle("cordinates of shooting color coded per race")
+```
+Let's try to build a linear model that maps the long / lat to the race of the victem
+```{r}
+
+numbered_rg <- c("WHITE HISPANIC"=10, 
+                 "WHITE"=20,
+                 "BLACK"=30,
+                 "BLACK HISPANIC"=40,
+                 "ASIAN / PACIFIC ISLANDER"=50,
+                 "AMERICAN INDIAN/ALASKAN NATIVE"=60)
+tdata <- data %>% 
+  select(c("VIC_RACE", "Longitude", "Latitude")) %>%
+  filter(VIC_RACE %in%c("WHITE HISPANIC", "WHITE", "BLACK", "BLACK HISPANIC", "ASIAN / PACIFIC ISLANDER","AMERICAN INDIAN/ALASKAN NATIVE")) %>%
+  filter(is.numeric(Longitude) & is.numeric(Latitude)) %>%
+  mutate(nvr=numbered_rg[VIC_RACE])
+
+mod <- lm(nvr ~ Longitude + Latitude, data=tdata)
+summary(mod)
+```
+Our model is not that good :(
+```{r}
+tdata %>% mutate(pred = predict(mod)) %>% filter(Latitude < 40.78 & Latitude > 40.72 &
+                                                   Longitude < -73.875 & Longitude >-73.9 & nvr ==50) %>% head(100)
+```
+Let's try to build a model that maps the time to the race of the victem
+```{r}
+tdata <- data %>% 
+  select(c("VIC_RACE", "OCCUR_TIME")) %>%
+  filter(VIC_RACE %in%c("WHITE HISPANIC", "WHITE", "BLACK", "BLACK HISPANIC", "ASIAN / PACIFIC ISLANDER","AMERICAN INDIAN/ALASKAN NATIVE")) %>%
+  # filter(is.numeric(OCCUR_TIME)) %>%
+  mutate(nvr=numbered_rg[VIC_RACE])
+
+tdata %>% head
+mod <- lm(nvr ~ OCCUR_TIME, data=tdata)
+summary(mod)
+```
+```{r}
+tdata %>% mutate(pred = predict(mod))
+```
+Biases:
+I am a more left centered individual -- I tried to be more centered
+The dates and times may not be accurate -- I tried to normalize the data at time to per week / month units
+The models that we produced were not very good predictors. The reason is probably because the relationships are not linear and therefore a linear model won't do us any good in those cases. 
